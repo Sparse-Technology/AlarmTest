@@ -3,12 +3,15 @@
 
 #include <QWidget>
 #include <QJsonObject>
+#include <QNetworkAccessManager>
 
 #include <thread>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class AlarmWidget; }
 QT_END_NAMESPACE
+
+class QLabel;
 
 class AlarmWidget : public QWidget
 {
@@ -19,6 +22,7 @@ public:
 	~AlarmWidget();
 
 protected:
+	void updateActiveEvents();
 	void handleNewEvent(const QJsonObject &obj);
 	void handleEventFinish(const QJsonObject &obj);
 signals:
@@ -32,12 +36,18 @@ private slots:
 
 	void on_comboCameras_currentIndexChanged(int index);
 
+	void on_pushSubscribe_clicked();
+
+	void on_tabWidget_currentChanged(int index);
+
 protected:
 	void clearAlarm();
 
 private:
 	Ui::AlarmWidget *ui;
 	std::thread listenThread;
+	QList<QLabel *> alarmLabels;
+	QNetworkAccessManager nm;
 	std::unordered_map<QString, std::unordered_map<QString, QJsonObject>> trackingObjects;
 };
 #endif // ALARMWIDGET_H

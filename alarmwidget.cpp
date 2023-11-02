@@ -5,8 +5,12 @@
 
 #include <QDebug>
 #include <QJsonArray>
+#include <QMessageBox>
 #include <QJsonObject>
+#include <QInputDialog>
 #include <QJsonDocument>
+#include <QNetworkReply>
+#include <QNetworkAccessManager>
 
 using namespace httplib;
 
@@ -30,6 +34,15 @@ AlarmWidget::AlarmWidget(QWidget *parent)
 		});
 		svr->listen("0.0.0.0", 24567);
 	});
+
+	QGridLayout *layout = new QGridLayout;
+	for (int i = 0; i < 16; i++) {
+		QLabel *label = new QLabel(this);
+		layout->addWidget(label, i / 4, i % 4, Qt::AlignCenter);
+		alarmLabels << label;
+		label->hide();
+	}
+	ui->tabWidget->widget(1)->setLayout(layout);
 }
 
 AlarmWidget::~AlarmWidget()
@@ -37,23 +50,52 @@ AlarmWidget::~AlarmWidget()
 	delete ui;
 }
 
+void AlarmWidget::updateActiveEvents()
+{
+	const auto &m = trackingObjects[ui->comboCameras->currentText()];
+	for (int i = 0; i < 16; i++)
+		alarmLabels[i]->hide();
+	int count = 0;
+	for (const auto &[key, value]: m) {
+		const auto &ba = QByteArray::fromBase64(value["image"].toString().toUtf8());
+		auto image = QImage::fromData(ba);
+		alarmLabels[count]->setToolTip(value["colorDistance"].toString());
+		alarmLabels[count]->setPixmap(QPixmap::fromImage(image));
+		alarmLabels[count++]->show();
+
+	}
+}
+
 void AlarmWidget::handleNewEvent(const QJsonObject &obj)
 {
+	/* do nothing if this is not the currently selected camera */
+	auto cam = obj["cameraName"].toString();
+	if (cam != ui->comboCameras->currentText())
+		return;
+
+	/* update event details list */
 	auto key = QString("%1").arg(obj["trackId"].toString());
 	qDebug() << "new" << key;
 	ui->listEvents->addItem(key);
 	on_listEvents_currentRowChanged(ui->listEvents->count() - 1);
+
+	/* update active event grid */
+	updateActiveEvents();
 }
 
 void AlarmWidget::handleEventFinish(const QJsonObject &obj)
 {
+	/* do nothing if this is not the currently selected camera */
+	auto cam = obj["cameraName"].toString();
+	if (cam != ui->comboCameras->currentText())
+		return;
+
+	/* delete event from details */
 	auto key = QString("%1").arg(obj["trackId"].toString());
 	qDebug() << "finish" << key;
 	for (int i = 0; i < ui->listEvents->count(); i++) {
 		if (ui->listEvents->item(i)->text() == key) {
-			//qDebug() << ui->listEvents->item(i)->text() << key;
 			delete ui->listEvents->takeItem(i);
-			//ui->listEvents->removeItemWidget(ui->listEvents->item(i));
 			if (ui->listEvents->count())
 				on_listEvents_currentRowChanged(0);
 			else
@@ -61,6 +103,9 @@ void AlarmWidget::handleEventFinish(const QJsonObject &obj)
 			return;
 		}
 	}
+
+	/* update active event grid */
+	updateActiveEvents();
 }
 
 void AlarmWidget::postRecved(const QString &data)
@@ -69,40 +114,34 @@ void AlarmWidget::postRecved(const QString &data)
 	const auto &arr = doc.array();
 
 	if (!arr.size()) {
-		//qDebug() << "zero array size";
+		qDebug() << "zero array size";
 		return;
 	}
-	//qDebug() << "new one";
 
 	for (const auto &value: arr) {
 		const auto &obj = value.toObject();
-		auto event = obj["eventType"].toString();
+		//auto event = obj["event"].toString();
+		auto type = obj["type"].toString();
 		auto trackId = obj["trackId"].toString();
 		auto cam = obj["cameraName"].toString();
+
+		/* add camera name to the camera filter combo */
 		if (ui->comboCameras->findText(cam) == -1)
 			ui->comboCameras->addItem(cam);
-		if (cam != ui->comboCameras->currentText())
-			continue;
-		auto object = obj["objectType"].toString();
-		//if (object == "person")
-			//object = "no safety vest";
-		if (object == "person" || object == "no hardhat") {
-			//qDebug() << event << trackId;
-			continue;
-		}
-		if (event == "track") {
+
+		/* update our local alarm data structure */
+		if (type == "start") {
 			trackingObjects[cam][trackId] = obj;
 			handleNewEvent(obj);
-		} else if (event == "disappeared") {
+		} else if (type == "end") {
 			if (!trackingObjects[cam].count(trackId)) {
 				qDebug("no previous track event for '%s'", qPrintable(trackId));
 			} else {
-				handleEventFinish(obj);
 				trackingObjects[cam].erase(trackId);
+				handleEventFinish(obj);
 			}
 		} else
-			qDebug() << "unhandled event type" << event;
-		/* event: track, dissappear */
+			qDebug() << "unhandled event type" << type << obj;
 	}
 }
 
@@ -129,6 +168,38 @@ void AlarmWidget::clearAlarm()
 void AlarmWidget::on_comboCameras_currentIndexChanged(int index)
 {
 	clearAlarm();
-	trackingObjects.clear();
+}
+
+void AlarmWidget::on_pushSubscribe_clicked()
+{
+	auto text = QInputDialog::getText(this, "Subscription", "Please enter your target IP");
+	if (text.isEmpty())
+		return;
+	/* register ourselves */
+	QNetworkRequest req(QUrl(QString("http://%1:50043/EventSub/Subscribe").arg(text)));
+	req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+	QJsonObject obj;
+	obj["url"] = "http://10.5.193.149:24567/my_test_ep";
+	auto *reply = nm.post(req, QJsonDocument(obj).toJson());
+	connect(reply, &QNetworkReply::errorOccurred, this, [this](QNetworkReply::NetworkError err) {
+		auto *reply = (QNetworkReply *)sender();
+		QMessageBox::warning(this, "Subscription error", QString("Error '%1' subscribing to alarm server").arg(err));
+		reply->deleteLater();
+	});
+
+	connect(reply, &QNetworkReply::finished, this, [this]() {
+		auto *reply = (QNetworkReply *)sender();
+		if (reply->error() == QNetworkReply::NoError)
+			QMessageBox::warning(this, "Subscription", QString("Successfully subscribed to alarm server"));
+		else
+			QMessageBox::warning(this, "Subscription error", QString("Error '%1' subscribing to alarm server").arg(reply->error()));
+		reply->deleteLater();
+	});
+}
+
+void AlarmWidget::on_tabWidget_currentChanged(int index)
+{
+	if (index == 1)
+		updateActiveEvents();
 }
 
