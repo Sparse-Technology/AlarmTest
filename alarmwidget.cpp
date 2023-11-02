@@ -10,6 +10,7 @@
 #include <QInputDialog>
 #include <QJsonDocument>
 #include <QNetworkReply>
+#include <QNetworkInterface>
 #include <QNetworkAccessManager>
 
 using namespace httplib;
@@ -120,7 +121,6 @@ void AlarmWidget::postRecved(const QString &data)
 
 	for (const auto &value: arr) {
 		const auto &obj = value.toObject();
-		//auto event = obj["event"].toString();
 		auto type = obj["type"].toString();
 		auto trackId = obj["trackId"].toString();
 		auto cam = obj["cameraName"].toString();
@@ -175,6 +175,17 @@ void AlarmWidget::on_pushSubscribe_clicked()
 	auto text = QInputDialog::getText(this, "Subscription", "Please enter your target IP");
 	if (text.isEmpty())
 		return;
+
+	QString myip;
+	if (myip.isEmpty()) {
+		auto addresses = QNetworkInterface::allAddresses();
+		for (auto &addr: addresses) {
+			if (addr.isLoopback() || addr.isBroadcast() || addr.isLinkLocal())
+				continue;
+			myip = addr.toString();
+			break;
+		}
+	}
 	/* register ourselves */
 	QNetworkRequest req(QUrl(QString("http://%1:50043/EventSub/Subscribe").arg(text)));
 	req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
