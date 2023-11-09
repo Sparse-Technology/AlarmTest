@@ -190,7 +190,7 @@ void AlarmWidget::on_pushSubscribe_clicked()
 	QNetworkRequest req(QUrl(QString("http://%1:50043/EventSub/Subscribe").arg(text)));
 	req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 	QJsonObject obj;
-	obj["url"] = "http://10.5.193.149:24567/my_test_ep";
+	obj["url"] = QString("http://%1:24567/my_test_ep").arg(myip);
 	auto *reply = nm.post(req, QJsonDocument(obj).toJson());
 	connect(reply, &QNetworkReply::errorOccurred, this, [this](QNetworkReply::NetworkError err) {
 		auto *reply = (QNetworkReply *)sender();
